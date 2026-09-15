@@ -101,7 +101,9 @@ go test ./...
 go test ./internal/service/ -run TestPersist -count=3
 # 设置专用验证库 DSN 后，同一套并发/顺序回归改走真实 PostgreSQL（SELECT ... FOR UPDATE）。
 # 夹具不会 TRUNCATE 业务表：需库名包含 test（或用 MARKETPAL_TEST_DB_ALLOW 精确放行），
-# 并显式确认目标库为空的专用验证库；运行数据隔离在每次执行新建的 rt_refund_* schema，结束自动 DROP。
+# 并显式确认目标库为空的专用验证库；检查范围由 model.AllModels() 持久化模型注册表完整枚举，
+# reviews/messages/audit_logs 等任何业务表有数据都会拒绝运行。
+# 运行数据隔离在每次执行新建的 rt_refund_* schema，结束自动 DROP。
 MARKETPAL_TEST_POSTGRES_DSN='host=localhost port=44014 user=marketpal_user password=marketpal_pwd dbname=marketpal_test sslmode=disable' \
 MARKETPAL_TEST_DEDICATED_CONFIRM=i-confirm-empty-dedicated-test-db \
   go test ./internal/service/ -run TestPersist -v

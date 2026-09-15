@@ -26,19 +26,7 @@ func Connect(cfg *config.Config, log *slog.Logger) (*gorm.DB, error) {
 	}
 	log.Info("database connected", "host", cfg.DBHost, "name", cfg.DBName)
 
-	models := []interface{}{
-		&model.User{},
-		&model.Product{},
-		&model.Favorite{},
-		&model.Address{},
-		&model.CartItem{},
-		&model.Order{},
-		&model.Refund{},
-		&model.RefundNegotiation{},
-		&model.Message{},
-		&model.Review{},
-		&model.AuditLog{},
-	}
+	models := model.AllModels()
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, fmt.Errorf("get sql db: %w", err)

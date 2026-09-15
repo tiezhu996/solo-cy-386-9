@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/marketpal/marketpal/internal/repository"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 // 本文件提供售后模块“可重复运行 + 真实持久化 + 独立连接”的回归夹具：
@@ -24,13 +26,6 @@ import (
 //   - 每个用例在独立临时目录建库、独立准备数据，-count=N 重复执行不串扰；
 //   - 并发用例通过 newHandle() 打开指向同一库的多个独立连接池（真实独立连接，非单连接串行化）；
 //   - 设置 MARKETPAL_TEST_POSTGRES_DSN 后自动改走真实 PostgreSQL，验证 SELECT ... FOR UPDATE 行锁。
-
-// refundTestModelsAll 售后回归需要迁移的全部模型（与生产 AutoMigrate 一致）。
-var refundTestModelsAll = []interface{}{
-	&model.User{}, &model.Product{}, &model.Favorite{}, &model.Address{},
-	&model.CartItem{}, &model.Order{}, &model.Refund{}, &model.RefundNegotiation{},
-	&model.Message{}, &model.Review{}, &model.AuditLog{},
-}
 
 // envSeq 进程内自增序号，保证临时库文件名与业务唯一键（订单号/售后单号）全局唯一。
 var envSeq atomic.Uint64
@@ -66,7 +61,7 @@ func openSQLiteEnv(t *testing.T) *persistEnv {
 	if err != nil {
 		t.Fatalf("打开磁盘 SQLite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(refundTestModelsAll...); err != nil {
+	if err := db.AutoMigrate(model.AllModels()...); err != nil {
 		t.Fatalf("SQLite AutoMigrate 失败: %v", err)
 	}
 	tunePool(db)
@@ -86,8 +81,30 @@ const (
 	pgKeepNamespaceEnv = "MARKETPAL_TEST_KEEP_NS"
 )
 
-// pgBusinessTables 安全检查覆盖的业务表（默认 search_path=public 下）。
-var pgBusinessTables = []string{"users", "orders", "products", "refunds", "refund_negotiations"}
+// businessTableNames 从持久化模型注册表（model.AllModels）推导真实表名。
+// 安全检查范围与生产 AutoMigrate 同源：新增模型只要在注册表登记，
+// 外部验证库的非空数据检查就会自动覆盖，不会再因漏改固定清单而放行。
+// 仅做结构解析（schema.Parse），不需要数据库连接。
+func businessTableNames() ([]string, error) {
+	names := make([]string, 0)
+	seen := map[string]bool{}
+	var cache sync.Map
+	namer := schema.NamingStrategy{}
+	for _, m := range model.AllModels() {
+		s, err := schema.Parse(m, &cache, namer)
+		if err != nil {
+			return nil, fmt.Errorf("解析模型表名失败 %T: %w", m, err)
+		}
+		if !seen[s.Table] {
+			seen[s.Table] = true
+			names = append(names, s.Table)
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("持久化模型表名清单为空，拒绝在未完成检查时运行")
+	}
+	return names, nil
+}
 
 func openPostgresEnv(t *testing.T, baseDSN string) *persistEnv {
 	t.Helper()
@@ -112,9 +129,14 @@ func openPostgresEnv(t *testing.T, baseDSN string) *persistEnv {
 		t.Fatalf("%v", err)
 	}
 
-	// 安全门 3：默认 schema 下不得已有业务数据；发现任何业务行都拒绝，不做清理。
-	tableCounts := make(map[string]int64, len(pgBusinessTables))
-	for _, table := range pgBusinessTables {
+	// 安全门 3：默认 schema 下不得已有业务数据；检查范围由 model.AllModels() 完整枚举，
+	// 任何一张业务表有数据都拒绝运行，且不做清理。
+	tables, err := businessTableNames()
+	if err != nil {
+		t.Fatalf("生成业务表检查清单失败（无法确认检查范围，拒绝运行）: %v", err)
+	}
+	tableCounts := make(map[string]int64, len(tables))
+	for _, table := range tables {
 		var exists int
 		if err := admin.Raw(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?`, table).Scan(&exists).Error; err != nil {
 			t.Fatalf("检查业务表 %s 是否存在失败: %v", table, err)
@@ -128,7 +150,7 @@ func openPostgresEnv(t *testing.T, baseDSN string) *persistEnv {
 		}
 		tableCounts[table] = n
 	}
-	if err := guardNoBusinessData(dbName, tableCounts); err != nil {
+	if err := guardNoBusinessData(dbName, tables, tableCounts); err != nil {
 		t.Fatalf("%v", err)
 	}
 
@@ -158,17 +180,21 @@ func openPostgresEnv(t *testing.T, baseDSN string) *persistEnv {
 		t.Fatalf("打开命名空间连接失败(schema=%s): %v", ns, err)
 	}
 	tunePool(db)
-	if err := db.AutoMigrate(refundTestModelsAll...); err != nil {
+	if err := db.AutoMigrate(model.AllModels()...); err != nil {
 		t.Fatalf("PostgreSQL AutoMigrate 失败(schema=%s): %v", ns, err)
 	}
 	return &persistEnv{t: t, driver: "postgres", dsn: nsDSN, adminDB: admin, db: db, nsSchema: ns}
 }
 
-// guardNoBusinessData 安全门 3（纯函数）：默认 schema 下任一业务表已有数据即拒绝运行。
-// tableCounts 为各业务表当前行数；存在非空表时必须失败，且夹具不得清理这些数据。
-func guardNoBusinessData(dbName string, tableCounts map[string]int64) error {
-	for _, table := range pgBusinessTables {
-		if n := tableCounts[table]; n > 0 {
+// guardNoBusinessData 安全门 3（纯函数）：tables 必须覆盖全部持久化模型，
+// 其中任一业务表已有数据（counts 中 >0）即拒绝运行。检查范围由模型注册表枚举，
+// 避免漏表；夹具不得清理这些数据。
+func guardNoBusinessData(dbName string, tables []string, counts map[string]int64) error {
+	if len(tables) == 0 {
+		return fmt.Errorf("拒绝运行：业务表检查清单为空，无法确认目标库 %s 是否含有既有数据", dbName)
+	}
+	for _, table := range tables {
+		if n := counts[table]; n > 0 {
 			return fmt.Errorf(
 				"拒绝运行：目标库 %s 的 public.%s 已存在 %d 行业务数据。夹具只允许使用空的专用验证库，"+
 					"请更换空库或用 %s 精确放行其它空专用库名；本次未创建或删除任何对象。",

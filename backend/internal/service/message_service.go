@@ -13,9 +13,9 @@ import (
 
 // MessageService 站内私信业务服务（发送后经 Hub 实时推送）。
 type MessageService struct {
-	repo    repository.MessageRepository
-	hub     *Hub
-	logger  *slog.Logger
+	repo   repository.MessageRepository
+	hub    *Hub
+	logger *slog.Logger
 }
 
 // NewMessageService 构造私信服务。
@@ -87,10 +87,10 @@ func (s *MessageService) ListConversations(userID uint) ([]dto.ConversationVO, e
 				peerName = m.Receiver.Nickname
 			}
 			conversations[peerID] = &dto.ConversationVO{
-				PeerID:    peerID,
-				PeerName:  peerName,
+				PeerID:      peerID,
+				PeerName:    peerName,
 				LastContent: m.Content,
-				LastTime:  util.FormatTime(m.CreatedAt),
+				LastTime:    util.FormatTime(m.CreatedAt),
 			}
 			if m.ProductID > 0 {
 				conversations[peerID].ProductID = m.ProductID

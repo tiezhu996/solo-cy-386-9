@@ -23,24 +23,26 @@ type OrderQuery struct {
 
 // OrderVO 订单视图对象。
 type OrderVO struct {
-	ID         uint        `json:"id"`
-	OrderNo    string      `json:"order_no"`
-	BuyerID    uint        `json:"buyer_id"`
-	SellerID   uint        `json:"seller_id"`
-	ProductID  uint        `json:"product_id"`
-	AddressID  uint        `json:"address_id"`
-	Quantity   int         `json:"quantity"`
-	TotalPrice float64     `json:"total_price"`
-	Status     string      `json:"status"`
-	Remark     string      `json:"remark"`
-	PaidAt     *string     `json:"paid_at,omitempty"`
-	ShippedAt  *string     `json:"shipped_at,omitempty"`
-	ReceivedAt *string     `json:"received_at,omitempty"`
-	CreatedAt  string      `json:"created_at"`
-	Product    *ProductVO  `json:"product,omitempty"`
-	Address    *AddressVO  `json:"address,omitempty"`
-	Buyer      *UserVO     `json:"buyer,omitempty"`
-	Seller     *UserVO     `json:"seller,omitempty"`
+	ID         uint       `json:"id"`
+	OrderNo    string     `json:"order_no"`
+	BuyerID    uint       `json:"buyer_id"`
+	SellerID   uint       `json:"seller_id"`
+	ProductID  uint       `json:"product_id"`
+	AddressID  uint       `json:"address_id"`
+	Quantity   int        `json:"quantity"`
+	TotalPrice float64    `json:"total_price"`
+	Status     string     `json:"status"`
+	Remark     string     `json:"remark"`
+	PaidAt     *string    `json:"paid_at,omitempty"`
+	ShippedAt  *string    `json:"shipped_at,omitempty"`
+	ReceivedAt *string    `json:"received_at,omitempty"`
+	CreatedAt  string     `json:"created_at"`
+	Product    *ProductVO `json:"product,omitempty"`
+	Address    *AddressVO `json:"address,omitempty"`
+	Buyer      *UserVO    `json:"buyer,omitempty"`
+	Seller     *UserVO    `json:"seller,omitempty"`
+	// ActiveRefund 进行中的售后单：非空表示订单“售后中”，前端据此暂停发货/收货/完成/评价入口。
+	ActiveRefund *RefundVO `json:"active_refund,omitempty"`
 }
 
 // OrderListResponse 订单列表分页响应。

@@ -39,14 +39,14 @@ func (s *UserService) Register(req dto.RegisterRequest) (*model.User, error) {
 		return nil, fmt.Errorf("register user %s: hash password: %w", req.Username, err)
 	}
 	user := &model.User{
-		Username:    req.Username,
+		Username:     req.Username,
 		PasswordHash: hash,
-		Nickname:    req.Nickname,
-		Email:       req.Email,
-		Phone:       req.Phone,
-		Role:        constants.UserRoleUser,
-		CreditScore: 100,
-		Status:      "active",
+		Nickname:     req.Nickname,
+		Email:        req.Email,
+		Phone:        req.Phone,
+		Role:         constants.UserRoleUser,
+		CreditScore:  100,
+		Status:       "active",
 	}
 	if err := s.repo.Create(user); err != nil {
 		return nil, fmt.Errorf("register user %s: %w", req.Username, err)

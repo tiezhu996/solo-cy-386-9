@@ -2,9 +2,9 @@ package dto
 
 // ReviewCreateRequest 创建评价入参。
 type ReviewCreateRequest struct {
-	OrderID   uint   `json:"order_id" binding:"required"`
-	Rating    string `json:"rating" binding:"required,oneof=good neutral bad"`
-	Content   string `json:"content" binding:"omitempty,max=500"`
+	OrderID uint   `json:"order_id" binding:"required"`
+	Rating  string `json:"rating" binding:"required,oneof=good neutral bad"`
+	Content string `json:"content" binding:"omitempty,max=500"`
 }
 
 // ReviewQuery 评价列表查询入参。
@@ -17,14 +17,14 @@ type ReviewQuery struct {
 
 // ReviewVO 评价视图对象。
 type ReviewVO struct {
-	ID         uint   `json:"id"`
-	OrderID    uint   `json:"order_id"`
-	ProductID  uint   `json:"product_id"`
-	ReviewerID uint   `json:"reviewer_id"`
-	RevieweeID uint   `json:"reviewee_id"`
-	Rating     string `json:"rating"`
-	Content    string `json:"content"`
-	CreatedAt  string `json:"created_at"`
+	ID         uint    `json:"id"`
+	OrderID    uint    `json:"order_id"`
+	ProductID  uint    `json:"product_id"`
+	ReviewerID uint    `json:"reviewer_id"`
+	RevieweeID uint    `json:"reviewee_id"`
+	Rating     string  `json:"rating"`
+	Content    string  `json:"content"`
+	CreatedAt  string  `json:"created_at"`
 	Reviewer   *UserVO `json:"reviewer,omitempty"`
 }
 

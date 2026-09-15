@@ -66,10 +66,47 @@ export interface OrderVO {
   status: string
   remark?: string
   created_at: string
+  active_refund_id?: number
   product?: ProductVO
   address?: AddressVO
   buyer?: UserVO
   seller?: UserVO
+  active_refund?: RefundVO
+}
+
+export interface RefundNegotiationVO {
+  id: number
+  actor_id: number
+  actor_role: 'buyer' | 'seller'
+  action: string
+  amount: number
+  remark?: string
+  evidence?: string[]
+  created_at: string
+}
+
+export interface RefundVO {
+  id: number
+  refund_no: string
+  order_id: number
+  order_no?: string
+  buyer_id: number
+  seller_id: number
+  type: string
+  reason: string
+  apply_amount: number
+  evidence?: string[]
+  status: string
+  proposal_amount?: number
+  proposal_reason?: string
+  final_amount?: number
+  order_status?: string
+  order_paid_amount?: number
+  refunded_at?: string
+  closed_at?: string
+  created_at: string
+  negotiations: RefundNegotiationVO[]
+  order?: OrderVO
 }
 
 export interface ConversationVO {

@@ -17,6 +17,8 @@ type OrderRepository interface {
 	ListByBuyer(buyerID uint, status string, page, pageSize int) ([]model.Order, int64, error)
 	ListBySeller(sellerID uint, status string, page, pageSize int) ([]model.Order, int64, error)
 	UpdateStatusForUpdate(tx *gorm.DB, id uint, status string, updates map[string]interface{}) error
+	// SetActiveRefundForUpdate 标记/解除订单的进行中售后单（refundID 为 nil 时解除，拒绝/撤销/完成后调用）。
+	SetActiveRefundForUpdate(tx *gorm.DB, orderID uint, refundID *uint) error
 	Update(order *model.Order) error
 }
 
@@ -53,7 +55,60 @@ func (r *orderRepo) GetByID(id uint) (*model.Order, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get order by id %d: %w", id, err)
 	}
+	if err := r.loadActiveRefund(&o); err != nil {
+		return nil, err
+	}
 	return &o, nil
+}
+
+// loadActiveRefund 手动加载订单的进行中售后单与协商历史（ActiveRefund 为 gorm:"-" 非外键字段）。
+func (r *orderRepo) loadActiveRefund(o *model.Order) error {
+	if o.ActiveRefundID == nil {
+		return nil
+	}
+	var rf model.Refund
+	err := r.db.
+		Preload("Negotiations", func(db *gorm.DB) *gorm.DB { return db.Order("id ASC") }).
+		First(&rf, *o.ActiveRefundID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("active refund %d of order %d missing: %w", *o.ActiveRefundID, o.ID, ErrNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("load active refund %d: %w", *o.ActiveRefundID, err)
+	}
+	o.ActiveRefund = &rf
+	return nil
+}
+
+// loadActiveRefundBatch 批量加载列表中各订单的进行中售后单（避免 N+1）。
+func (r *orderRepo) loadActiveRefundBatch(orders []model.Order) error {
+	ids := make([]uint, 0)
+	seen := map[uint]bool{}
+	for i := range orders {
+		if orders[i].ActiveRefundID != nil && !seen[*orders[i].ActiveRefundID] {
+			ids = append(ids, *orders[i].ActiveRefundID)
+			seen[*orders[i].ActiveRefundID] = true
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var refunds []model.Refund
+	if err := r.db.
+		Preload("Negotiations", func(db *gorm.DB) *gorm.DB { return db.Order("id ASC") }).
+		Where("id IN ?", ids).Find(&refunds).Error; err != nil {
+		return fmt.Errorf("load active refunds batch: %w", err)
+	}
+	byID := map[uint]*model.Refund{}
+	for i := range refunds {
+		byID[refunds[i].ID] = &refunds[i]
+	}
+	for i := range orders {
+		if orders[i].ActiveRefundID != nil {
+			orders[i].ActiveRefund = byID[*orders[i].ActiveRefundID]
+		}
+	}
+	return nil
 }
 
 func (r *orderRepo) GetByIDForUpdate(tx *gorm.DB, id uint) (*model.Order, error) {
@@ -78,8 +133,12 @@ func (r *orderRepo) ListByBuyer(buyerID uint, status string, page, pageSize int)
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("count buyer orders: %w", err)
 	}
-	if err := q.Preload("Product").Preload("Product.Seller").Preload("Address").Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&orders).Error; err != nil {
+	if err := q.Preload("Product").Preload("Product.Seller").Preload("Address").
+		Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&orders).Error; err != nil {
 		return nil, 0, fmt.Errorf("list buyer orders: %w", err)
+	}
+	if err := r.loadActiveRefundBatch(orders); err != nil {
+		return nil, 0, err
 	}
 	return orders, total, nil
 }
@@ -94,8 +153,12 @@ func (r *orderRepo) ListBySeller(sellerID uint, status string, page, pageSize in
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("count seller orders: %w", err)
 	}
-	if err := q.Preload("Product").Preload("Buyer").Preload("Address").Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&orders).Error; err != nil {
+	if err := q.Preload("Product").Preload("Buyer").Preload("Address").
+		Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&orders).Error; err != nil {
 		return nil, 0, fmt.Errorf("list seller orders: %w", err)
+	}
+	if err := r.loadActiveRefundBatch(orders); err != nil {
+		return nil, 0, err
 	}
 	return orders, total, nil
 }
@@ -105,6 +168,18 @@ func (r *orderRepo) UpdateStatusForUpdate(tx *gorm.DB, id uint, status string, u
 	res := tx.Model(&model.Order{}).Where("id = ?", id).Updates(updates)
 	if res.Error != nil {
 		return fmt.Errorf("update order %d status to %s: %w", id, status, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetActiveRefundForUpdate 标记/解除订单“售后中”（同一事务内随售后状态一起提交）。
+func (r *orderRepo) SetActiveRefundForUpdate(tx *gorm.DB, orderID uint, refundID *uint) error {
+	res := tx.Model(&model.Order{}).Where("id = ?", orderID).Update("active_refund_id", refundID)
+	if res.Error != nil {
+		return fmt.Errorf("set order %d active refund %v: %w", orderID, refundID, res.Error)
 	}
 	if res.RowsAffected == 0 {
 		return ErrNotFound

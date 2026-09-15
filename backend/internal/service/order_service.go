@@ -11,7 +11,6 @@ import (
 	"github.com/marketpal/marketpal/internal/dto"
 	"github.com/marketpal/marketpal/internal/model"
 	"github.com/marketpal/marketpal/internal/repository"
-	"github.com/marketpal/marketpal/internal/util"
 	"gorm.io/gorm"
 )
 
@@ -131,6 +130,9 @@ func (s *OrderService) Ship(sellerID, orderID uint) (*model.Order, error) {
 		if o.SellerID != sellerID {
 			return utilAppError(constants.CodeNotOrderOwner, "订单发货失败：卖家 id="+fmt.Sprint(sellerID)+" 无权操作订单 "+o.OrderNo, nil)
 		}
+		if err := ensureNoActiveRefund(o, "发货"); err != nil {
+			return err
+		}
 		if !canTransition(o.Status, constants.OrderStatusShipped) {
 			return utilAppError(constants.CodeOrderStateInvalid, "订单发货失败：订单 "+o.OrderNo+" 状态 "+o.Status+" 不可流转到 "+constants.OrderStatusShipped, nil)
 		}
@@ -163,6 +165,9 @@ func (s *OrderService) Receive(buyerID, orderID uint) (*model.Order, error) {
 		if o.BuyerID != buyerID {
 			return utilAppError(constants.CodeNotOrderOwner, "确认收货失败：买家 id="+fmt.Sprint(buyerID)+" 无权操作订单 "+o.OrderNo, nil)
 		}
+		if err := ensureNoActiveRefund(o, "收货"); err != nil {
+			return err
+		}
 		if !canTransition(o.Status, constants.OrderStatusReceived) {
 			return utilAppError(constants.CodeOrderStateInvalid, "确认收货失败：订单 "+o.OrderNo+" 状态 "+o.Status+" 不可流转到 "+constants.OrderStatusReceived, nil)
 		}
@@ -194,6 +199,9 @@ func (s *OrderService) Complete(buyerID, orderID uint) (*model.Order, error) {
 		}
 		if o.BuyerID != buyerID {
 			return utilAppError(constants.CodeNotOrderOwner, "完成交易失败：买家 id="+fmt.Sprint(buyerID)+" 无权操作订单 "+o.OrderNo, nil)
+		}
+		if err := ensureNoActiveRefund(o, "完成交易"); err != nil {
+			return err
 		}
 		if !canTransition(o.Status, constants.OrderStatusCompleted) {
 			return utilAppError(constants.CodeOrderStateInvalid, "完成交易失败：订单 "+o.OrderNo+" 状态 "+o.Status+" 不可流转到 "+constants.OrderStatusCompleted, nil)
@@ -229,6 +237,9 @@ func (s *OrderService) Cancel(userID, orderID uint, role string) (*model.Order, 
 		}
 		if role == "seller" && o.SellerID != userID {
 			return utilAppError(constants.CodeNotOrderOwner, "取消订单失败：卖家 id="+fmt.Sprint(userID)+" 无权操作订单 "+o.OrderNo, nil)
+		}
+		if err := ensureNoActiveRefund(o, "取消订单"); err != nil {
+			return err
 		}
 		if !canTransition(o.Status, constants.OrderStatusCancelled) {
 			return utilAppError(constants.CodeOrderStateInvalid, "取消订单失败：订单 "+o.OrderNo+" 状态 "+o.Status+" 不可取消", nil)
@@ -274,7 +285,7 @@ func (s *OrderService) List(userID uint, q dto.OrderQuery) (*dto.OrderListRespon
 	}
 	list := make([]dto.OrderVO, 0, len(orders))
 	for i := range orders {
-		list = append(list, toOrderVO(&orders[i]))
+		list = append(list, dto.FromOrder(&orders[i]))
 	}
 	return &dto.OrderListResponse{List: list, Total: total, Page: page, Size: pageSize}, nil
 }
@@ -304,51 +315,15 @@ func canTransition(from, to string) bool {
 	return false
 }
 
+// ensureNoActiveRefund 售后中订单暂停发货/收货/完成/取消等流转。
+func ensureNoActiveRefund(o *model.Order, action string) error {
+	if o.ActiveRefundID != nil {
+		return utilAppError(constants.CodeOrderInRefund, "订单 "+o.OrderNo+" 售后单处理中（refund_id="+fmt.Sprint(*o.ActiveRefundID)+"），暂停"+action, nil)
+	}
+	return nil
+}
+
 // genOrderNo 生成订单号：yyyyMMddHHmmss + 6 位随机数。
 func genOrderNo() string {
 	return fmt.Sprintf("%s%06d", time.Now().Format("20060102150405"), rand.Intn(1000000))
-}
-
-// toOrderVO model.Order → 视图对象。
-func toOrderVO(o *model.Order) dto.OrderVO {
-	vo := dto.OrderVO{
-		ID:         o.ID,
-		OrderNo:    o.OrderNo,
-		BuyerID:    o.BuyerID,
-		SellerID:   o.SellerID,
-		ProductID:  o.ProductID,
-		AddressID:  o.AddressID,
-		Quantity:   o.Quantity,
-		TotalPrice: o.TotalPrice,
-		Status:     o.Status,
-		Remark:     o.Remark,
-		CreatedAt:  util.FormatTime(o.CreatedAt),
-	}
-	if o.PaidAt != nil {
-		t := util.FormatTime(*o.PaidAt)
-		vo.PaidAt = &t
-	}
-	if o.ShippedAt != nil {
-		t := util.FormatTime(*o.ShippedAt)
-		vo.ShippedAt = &t
-	}
-	if o.ReceivedAt != nil {
-		t := util.FormatTime(*o.ReceivedAt)
-		vo.ReceivedAt = &t
-	}
-	if o.Product != nil {
-		prod := dto.FromProduct(o.Product, false)
-		vo.Product = &prod
-	}
-	if o.Address != nil {
-		addr := dto.FromAddress(o.Address)
-		vo.Address = &addr
-	}
-	if o.Buyer != nil {
-		vo.Buyer = dto.FromUser(o.Buyer)
-	}
-	if o.Seller != nil {
-		vo.Seller = dto.FromUser(o.Seller)
-	}
-	return vo
 }

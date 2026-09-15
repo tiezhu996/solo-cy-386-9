@@ -26,6 +26,12 @@ const (
 	CodeFileTooLarge       = 10015 // 文件过大
 	CodeUnsupportedMedia   = 10016 // 不支持的图片格式
 	CodeRedisUnavailable   = 10017 // 消息通道不可用
+	CodeRefundNotFound     = 10018 // 售后单不存在
+	CodeRefundExists       = 10019 // 订单已有售后单
+	CodeRefundStateInvalid = 10020 // 售后状态不允许该操作
+	CodeNotRefundParty     = 10021 // 非售后买卖双方
+	CodeRefundAmountExceed = 10022 // 退款金额超过实付金额
+	CodeOrderInRefund      = 10023 // 订单售后处理中
 )
 
 // ErrorCodeMessages 错误码对应的默认提示文案（constants/messages.go 中另有接口文案）。
@@ -54,4 +60,10 @@ var ErrorCodeMessages = map[int]string{
 	CodeFileTooLarge:       "上传图片不能超过 5MB",
 	CodeUnsupportedMedia:   "仅支持 jpg/jpeg/png/webp 图片",
 	CodeRedisUnavailable:   "实时消息通道暂不可用",
+	CodeRefundNotFound:     "售后单不存在",
+	CodeRefundExists:       "该订单已存在售后单，不能重复申请",
+	CodeRefundStateInvalid: "当前售后状态不允许该操作",
+	CodeNotRefundParty:     "只有订单买卖双方可查看或操作售后",
+	CodeRefundAmountExceed: "退款金额不能超过订单实付金额",
+	CodeOrderInRefund:      "订单售后处理中，暂停发货、收货、完成与评价",
 }

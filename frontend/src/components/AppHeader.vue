@@ -7,6 +7,7 @@
         <router-link to="/search">逛逛</router-link>
         <router-link v-if="userStore.isLoggedIn" to="/products/create">发布闲置</router-link>
         <router-link v-if="userStore.isLoggedIn" to="/orders">我的订单</router-link>
+        <router-link v-if="userStore.isLoggedIn" to="/refunds">售后中心</router-link>
         <router-link v-if="userStore.isLoggedIn" to="/messages">
           私信
           <el-badge v-if="messageStore.unread > 0" :value="messageStore.unread" class="badge" />

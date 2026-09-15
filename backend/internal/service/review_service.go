@@ -41,6 +41,9 @@ func (s *ReviewService) Create(reviewerID uint, req dto.ReviewCreateRequest) (*m
 		if order.Status != constants.OrderStatusCompleted {
 			return utilAppError(constants.CodeOrderStateInvalid, "评价失败：订单 "+order.OrderNo+" 状态为 "+order.Status+"，交易完成后才能评价", nil)
 		}
+		if order.ActiveRefundID != nil {
+			return utilAppError(constants.CodeOrderInRefund, "评价失败：订单 "+order.OrderNo+" 售后处理中，暂停评价", nil)
+		}
 		revieweeID := order.SellerID
 		if reviewerID == order.SellerID {
 			revieweeID = order.BuyerID

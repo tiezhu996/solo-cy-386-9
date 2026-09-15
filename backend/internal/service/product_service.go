@@ -143,12 +143,12 @@ func (s *ProductService) List(q dto.ProductQuery, viewerID uint) (*dto.ProductLi
 		pageSize = 10
 	}
 	query := map[string]interface{}{
-		"keyword":    q.Keyword,
-		"category":   q.Category,
-		"condition":  q.Condition,
-		"min_price":  q.MinPrice,
-		"max_price":  q.MaxPrice,
-		"status":     q.Status,
+		"keyword":   q.Keyword,
+		"category":  q.Category,
+		"condition": q.Condition,
+		"min_price": q.MinPrice,
+		"max_price": q.MaxPrice,
+		"status":    q.Status,
 	}
 	if q.Status == "" {
 		query["status"] = constants.ProductStatusOnSale
@@ -238,6 +238,7 @@ func (s *ProductService) Unfavorite(userID, productID uint) error {
 	s.logger.Info(constants.LogFavoriteRemoved, "user_id", userID, "product_id", productID)
 	return nil
 }
+
 // toProductVO model → 视图对象（dto 集中转换，商品/订单/购物车模块复用）。
 func toProductVO(p *model.Product, isFavorite bool) dto.ProductVO {
 	return dto.FromProduct(p, isFavorite)

@@ -45,6 +45,7 @@ func main() {
 	addressRepo := repository.NewAddressRepository(db)
 	cartRepo := repository.NewCartRepository(db)
 	orderRepo := repository.NewOrderRepository(db)
+	refundRepo := repository.NewRefundRepository(db)
 	messageRepo := repository.NewMessageRepository(db)
 	reviewRepo := repository.NewReviewRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
@@ -55,6 +56,7 @@ func main() {
 	addressService := service.NewAddressService(addressRepo, logger)
 	cartService := service.NewCartService(cartRepo, productRepo, logger)
 	orderService := service.NewOrderService(db, orderRepo, productRepo, addressRepo, cartRepo, logger)
+	refundService := service.NewRefundService(db, refundRepo, orderRepo, productRepo, logger)
 	hub := service.NewHub(rdb, logger)
 	messageService := service.NewMessageService(messageRepo, hub, logger)
 	reviewService := service.NewReviewService(db, reviewRepo, orderRepo, userService, logger)
@@ -66,6 +68,7 @@ func main() {
 	addressHandler := handler.NewAddressHandler(addressService)
 	cartHandler := handler.NewCartHandler(cartService)
 	orderHandler := handler.NewOrderHandler(orderService)
+	refundHandler := handler.NewRefundHandler(refundService)
 	messageHandler := handler.NewMessageHandler(messageService)
 	reviewHandler := handler.NewReviewHandler(reviewService)
 	auditHandler := handler.NewAuditHandler(auditService)
@@ -77,7 +80,7 @@ func main() {
 	}
 	engine := gin.New()
 	router.Register(engine, cfg, logger,
-		userHandler, productHandler, addressHandler, cartHandler, orderHandler,
+		userHandler, productHandler, addressHandler, cartHandler, orderHandler, refundHandler,
 		messageHandler, reviewHandler, auditHandler, wsHandler, uploadHandler, auditService)
 
 	server := &http.Server{

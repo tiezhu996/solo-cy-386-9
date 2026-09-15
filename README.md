@@ -1,6 +1,6 @@
 # MarketPal 本地生活市场平台
 
-一句话介绍：MarketPal 是一个 C2C 闲置物品交易平台，支持商品发布、瀑布流浏览与多维搜索、购物车下单、订单状态流转、站内私信实时推送、交易互评与信用积分。
+一句话介绍：MarketPal 是一个 C2C 闲置物品交易平台，支持商品发布、瀑布流浏览与多维搜索、购物车下单、订单状态流转、退货退款/部分退款售后协商、站内私信实时推送、交易互评与信用积分。
 
 ## 快速启动（Docker Compose）
 
@@ -24,9 +24,10 @@ docker compose up -d --build
 2. 商品浏览与搜索：瀑布流展示、关键词/分类/价格区间/成色筛选、价格与发布时间排序
 3. 商品详情：图片轮播、卖家信息、收藏、联系卖家（站内私信）
 4. 购物车与下单：加购、选择收货地址、确认下单、订单状态流转（待付款→待发货→已发货→已收货→已完成）
-5. 用户私信：买卖双方站内文字沟通，WebSocket 实时推送
-6. 评价系统：交易完成后互评（好评/中评/差评），影响信用积分
-7. 个人中心：我的发布、我的收藏、我的订单、收货地址管理、信用积分展示
+5. 售后处理：买家在完成交易前可对已付款订单发起一轮退货退款/部分退款（原因、金额、凭证），卖家可同意、拒绝或提出一次方案；卖家处理前买方可撤销；售后中订单暂停发货、收货、完成与评价；协商历史全程可回读
+6. 用户私信：买卖双方站内文字沟通，WebSocket 实时推送
+7. 评价系统：交易完成后互评（好评/中评/差评），影响信用积分
+8. 个人中心：我的发布、我的收藏、我的订单、售后管理、收货地址管理、信用积分展示
 
 ## 技术栈
 
@@ -52,7 +53,7 @@ docker compose up -d --build
 │   ├── internal/
 │   │   ├── config/config.go
 │   │   ├── database/database.go  # PostgreSQL + Redis 连接
-│   │   ├── model/                # 每实体一个文件：user/product/order/message/review/address/cart_item/favorite/audit_log
+│   │   ├── model/                # 每实体一个文件：user/product/order/refund/refund_negotiation/message/review/address/cart_item/favorite/audit_log
 │   │   ├── dto/                  # 每实体一个 DTO 文件 + vo.go 视图转换
 │   │   ├── repository/           # 每实体一个仓储文件
 │   │   ├── service/              # 每实体一个服务文件（含 ws_hub.go 实时推送）
@@ -169,6 +170,44 @@ ORDER_ID=$(curl -sS -X POST http://localhost:19406/api/v1/orders \
   -d '{"product_id":1,"address_id":1,"quantity":1}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["id"])')
 curl -sS -X POST http://localhost:19406/api/v1/orders/$ORDER_ID/pay -H "Authorization: Bearer $TOKEN"
 ```
+
+### 售后处理（退货退款 / 部分退款）
+
+```bash
+# 买家对已付款、完成交易前的订单发起一轮售后（原因、金额、凭证）
+REFUND_ID=$(curl -sS -X POST http://localhost:19406/api/v1/refunds \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"order_id\":$ORDER_ID,\"type\":\"partial_refund\",\"reason\":\"商品与描述不符\",\"amount\":20,\"evidence\":[\"http://host/uploads/p1.jpg\"]}" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["id"])')
+
+# 卖家三选一：同意 / 拒绝（带理由）/ 提出一次方案（金额不超过实付）
+curl -sS -X POST http://localhost:19406/api/v1/refunds/$REFUND_ID/agree   -H "Authorization: Bearer $SELLER_TOKEN"
+curl -sS -X POST http://localhost:19406/api/v1/refunds/$REFUND_ID/reject  -H "Authorization: Bearer $SELLER_TOKEN" -H 'Content-Type: application/json' -d '{"reason":"凭证不足"}'
+curl -sS -X POST http://localhost:19406/api/v1/refunds/$REFUND_ID/propose -H "Authorization: Bearer $SELLER_TOKEN" -H 'Content-Type: application/json' -d '{"amount":10,"reason":"只同意退 10 元"}'
+
+# 卖家提方案后：买家接受（退款成功）；卖家处理前买家也可撤销（订单恢复原状态）
+curl -sS -X POST http://localhost:19406/api/v1/refunds/$REFUND_ID/accept -H "Authorization: Bearer $TOKEN"
+curl -sS -X POST http://localhost:19406/api/v1/refunds/$REFUND_ID/cancel -H "Authorization: Bearer $TOKEN"
+
+# 查询：售后详情（仅买卖双方）、按订单回读、买/卖双视角列表
+curl -sS http://localhost:19406/api/v1/refunds/$REFUND_ID            -H "Authorization: Bearer $TOKEN"
+curl -sS http://localhost:19406/api/v1/orders/$ORDER_ID/refund       -H "Authorization: Bearer $TOKEN"
+curl -sS "http://localhost:19406/api/v1/refunds?role=buyer&page=1&page_size=10" -H "Authorization: Bearer $TOKEN"
+```
+
+售后 API 清单（全部 `/api/v1` 前缀，需登录；买卖双方鉴权在 service 层）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/refunds` | 买家发起售后（一轮；重复提交相同申请幂等返回，不改写） |
+| POST | `/refunds/:id/agree` | 卖家同意（按申请金额退款，结束售后） |
+| POST | `/refunds/:id/reject` | 卖家拒绝（带原因，订单恢复原状态） |
+| POST | `/refunds/:id/propose` | 卖家提出一次方案（金额 ≤ 实付） |
+| POST | `/refunds/:id/accept` | 买家接受方案（按方案金额退款，结束售后） |
+| POST | `/refunds/:id/cancel` | 买家撤销（卖家处理前/方案待确认，订单恢复原状态） |
+| GET | `/refunds/:id` | 售后详情（含退款结果与协商历史，仅买卖双方） |
+| GET | `/refunds?role=buyer|seller` | 售后列表（买/卖双视角复用同一 service） |
+| GET | `/orders/:id/refund` | 按订单回读售后（订单详情页复用 `GetByOrder` 鉴权） |
 
 ## Docker 部署说明
 
@@ -303,6 +342,42 @@ curl -sS -X POST http://localhost:19406/api/v1/orders/$ORDER_ID/pay -H "Authoriz
 - `frontend/src/components/StatusBadge.vue`
 - `frontend/src/pages/OrdersPage.vue`（评价弹窗）
 - `frontend/src/utils/format.ts`（formatRating）
+
+### 7. 售后类型/状态/动作 Refund（return_refund|partial_refund；pending_seller/proposal_pending/agreed/rejected/cancelled；apply/agree/reject/propose/accept/cancel）
+
+业务规则：买家仅可对已付款且完成交易前（待发货/已发货/已收货）的订单发起一轮售后；卖家可同意、拒绝或提出一次方案；卖家处理前买方可撤销；售后中订单暂停发货、收货、完成与评价；仅买卖双方可查看和操作；退款金额不能超过实付；所有多步写在同一事务内以固定顺序（订单行 → 售后单行）`SELECT ... FOR UPDATE` + 条件状态更新，并发处理只能有一个结果；协商历史只追加，重复提交不能改写记录。
+
+后端出现位置：
+
+- `backend/internal/constants/enums.go`（RefundType/RefundStatus/RefundAction 定义 + `RefundStatusTransitions` 状态机 + `RefundFinalStatuses`/`CanRefundTransition`/`ValidRefund*`/`RefundableOrderStatuses`）
+- `backend/internal/model/refund.go`（Refund、RefundNegotiation 实体；order_id 唯一索引杜绝重复申请）
+- `backend/internal/model/order.go`（`ActiveRefundID` 售后中标记，ActiveRefund 为非外键手动加载字段，避免 orders↔refunds 循环约束）
+- `backend/internal/dto/refund_dto.go`（申请/拒绝/方案入参 oneof/gt 校验、RefundVO/RefundNegotiationVO）
+- `backend/internal/repository/refund_repository.go`（ForUpdate 行锁、`TransitForUpdate` 条件流转、协商历史只追加）
+- `backend/internal/repository/order_repository.go`（`SetActiveRefundForUpdate`、列表/详情手动回读 ActiveRefund）
+- `backend/internal/service/refund_service.go`（Apply/Agree/Reject/Propose/Accept/Cancel 状态机 + 幂等 + 金额上限校验 + 事务）
+- `backend/internal/service/order_service.go`（Ship/Receive/Complete/Cancel 中 `ensureNoActiveRefund` 拦截）
+- `backend/internal/service/review_service.go`（售后中暂停评价的二次防护）
+- `backend/internal/handler/refund_handler.go`、`backend/internal/router/refund.go`（售后路由与参数校验）
+- `backend/internal/constants/error_codes.go`（CodeRefundNotFound/Exists/StateInvalid/NotRefundParty/AmountExceed/OrderInRefund）
+- `backend/internal/constants/log_templates.go`（LogRefundApplied/Agreed/Rejected/Proposed/Accepted/Cancelled/Viewed/OrderBlockedByRefund）
+- `backend/internal/constants/messages.go`（MsgRefund* 接口文案）
+- `backend/internal/util/formatters.go`（FormatRefundTypeText/FormatRefundStatusText/FormatRefundActionText）
+- `backend/internal/middleware/error_handler.go`（售后错误码 → HTTP 状态映射）
+- `backend/internal/database/database.go`（AutoMigrate 注册新模型）、`backend/migrations/001_init.sql`（refunds/refund_negotiations/orders.active_refund_id）
+- 测试：`backend/internal/service/refund_service_test.go`、`backend/internal/repository/refund_repository_test.go`
+
+前端出现位置：
+
+- `frontend/src/constants/index.ts`（RefundType/RefundStatus/RefundAction 文案与徽标色）
+- `frontend/src/api/types.ts`（RefundVO/RefundNegotiationVO，OrderVO.active_refund）、`frontend/src/api/refund.ts`
+- `frontend/src/components/StatusBadge.vue`（refund/refundType 徽标）
+- `frontend/src/components/RefundApplyDialog.vue`（申请表单：类型/金额/原因/凭证，金额上限实付）
+- `frontend/src/components/RefundSellerDialog.vue`（卖家同意/拒绝/提方案）
+- `frontend/src/components/RefundTimeline.vue`（协商历史时间线）
+- `frontend/src/pages/OrdersPage.vue`（申请入口、售后中暂停按钮与回读、撤销）
+- `frontend/src/pages/RefundsPage.vue`（售后中心买/卖双视角、详情、状态筛选）
+- `frontend/src/utils/format.ts`（formatRefundType/formatRefundStatus）、`frontend/src/router/index.ts`（/refunds 路由）
 
 ## 横切关注点
 

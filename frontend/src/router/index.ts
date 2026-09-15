@@ -12,6 +12,7 @@ const router = createRouter({
     { path: '/cart', name: 'cart', component: () => import('../pages/CartPage.vue'), meta: { requiresAuth: true } },
     { path: '/checkout', name: 'checkout', component: () => import('../pages/CheckoutPage.vue'), meta: { requiresAuth: true } },
     { path: '/orders', name: 'orders', component: () => import('../pages/OrdersPage.vue'), meta: { requiresAuth: true } },
+    { path: '/refunds', name: 'refunds', component: () => import('../pages/RefundsPage.vue'), meta: { requiresAuth: true } },
     { path: '/messages', name: 'messages', component: () => import('../pages/MessagesPage.vue'), meta: { requiresAuth: true } },
     { path: '/profile', name: 'profile', component: () => import('../pages/ProfilePage.vue'), meta: { requiresAuth: true } },
     { path: '/admin/audits', name: 'admin-audits', component: () => import('../pages/AdminAuditPage.vue'), meta: { requiresAuth: true, requiresAdmin: true } },

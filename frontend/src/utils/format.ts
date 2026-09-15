@@ -68,3 +68,22 @@ export function formatRole(text: string): string {
   }
   return map[text] ?? text
 }
+
+export function formatRefundType(text: string): string {
+  const map: Record<string, string> = {
+    return_refund: '退货退款',
+    partial_refund: '部分退款'
+  }
+  return map[text] ?? text
+}
+
+export function formatRefundStatus(text: string): string {
+  const map: Record<string, string> = {
+    pending_seller: '待卖家处理',
+    proposal_pending: '待买家确认方案',
+    agreed: '退款成功',
+    rejected: '卖家已拒绝',
+    cancelled: '买家已撤销'
+  }
+  return map[text] ?? text
+}

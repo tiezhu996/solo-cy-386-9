@@ -91,3 +91,58 @@ export const ReviewRatingText: Record<string, string> = {
   [ReviewRating.NEUTRAL]: '中评',
   [ReviewRating.BAD]: '差评'
 }
+
+// 售后类型（买家完成交易前可发起一轮：退货退款 / 部分退款）。
+export const RefundType = {
+  RETURN: 'return_refund',
+  PARTIAL: 'partial_refund'
+} as const
+
+export const RefundTypeText: Record<string, string> = {
+  [RefundType.RETURN]: '退货退款',
+  [RefundType.PARTIAL]: '部分退款'
+}
+
+// 售后状态机：与后端 constants.RefundStatusTransitions 对应。
+export const RefundStatus = {
+  PENDING_SELLER: 'pending_seller',
+  PROPOSAL_PENDING: 'proposal_pending',
+  AGREED: 'agreed',
+  REJECTED: 'rejected',
+  CANCELLED: 'cancelled'
+} as const
+
+export const RefundStatusText: Record<string, string> = {
+  [RefundStatus.PENDING_SELLER]: '待卖家处理',
+  [RefundStatus.PROPOSAL_PENDING]: '待买家确认方案',
+  [RefundStatus.AGREED]: '退款成功',
+  [RefundStatus.REJECTED]: '卖家已拒绝',
+  [RefundStatus.CANCELLED]: '买家已撤销'
+}
+
+export const RefundStatusTag: Record<string, string> = {
+  [RefundStatus.PENDING_SELLER]: 'warning',
+  [RefundStatus.PROPOSAL_PENDING]: 'primary',
+  [RefundStatus.AGREED]: 'success',
+  [RefundStatus.REJECTED]: 'danger',
+  [RefundStatus.CANCELLED]: 'info'
+}
+
+// 协商历史动作（只追加）。
+export const RefundAction = {
+  APPLY: 'apply',
+  AGREE: 'agree',
+  REJECT: 'reject',
+  PROPOSE: 'propose',
+  ACCEPT: 'accept',
+  CANCEL: 'cancel'
+} as const
+
+export const RefundActionText: Record<string, string> = {
+  [RefundAction.APPLY]: '买家发起售后',
+  [RefundAction.AGREE]: '卖家同意退款',
+  [RefundAction.REJECT]: '卖家拒绝',
+  [RefundAction.PROPOSE]: '卖家提出方案',
+  [RefundAction.ACCEPT]: '买家接受方案',
+  [RefundAction.CANCEL]: '买家撤销售后'
+}

@@ -44,6 +44,6 @@ type UserVO struct {
 
 // LoginResponse 登录响应。
 type LoginResponse struct {
-	Token string  `json:"token"`
-	User  UserVO  `json:"user"`
+	Token string `json:"token"`
+	User  UserVO `json:"user"`
 }

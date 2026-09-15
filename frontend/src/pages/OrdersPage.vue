@@ -15,28 +15,45 @@
       <el-card v-for="o in orders" :key="o.id" class="order-card" shadow="never">
         <div class="order-head">
           <span class="no">订单号：{{ o.order_no }}</span>
-          <StatusBadge type="order" :value="o.status" />
+          <span class="badges">
+            <el-tag v-if="o.active_refund" size="small" type="warning" effect="dark">售后处理中</el-tag>
+            <StatusBadge type="order" :value="o.status" />
+          </span>
         </div>
         <div class="order-body" @click="$router.push(`/products/${o.product_id}`)">
           <el-image v-if="o.product?.images?.length" :src="o.product.images[0]" fit="cover" class="thumb" />
           <div class="info">
             <div class="title">{{ o.product?.title }}</div>
-            <div class="sub">{{ o.product?.condition_text || '' }} × {{ o.quantity }}</div>
+            <div class="sub">{{ o.product ? formatCondition(o.product.condition) : '' }} × {{ o.quantity }}</div>
+            <div v-if="o.active_refund" class="refund-line" @click.stop="openRefund(o.active_refund)">
+              <StatusBadge type="refundType" :value="o.active_refund.type" />
+              <StatusBadge type="refund" :value="o.active_refund.status" />
+              <span class="refund-link">查看售后协商 ›</span>
+            </div>
           </div>
           <div class="amount">¥{{ formatPrice(o.total_price) }}</div>
         </div>
         <div class="order-actions">
-          <template v-if="o.status === 'pending_payment'">
+          <!-- 售后处理中：暂停发货/收货/完成/评价等全部流转操作 -->
+          <template v-if="o.active_refund">
+            <el-button size="small" @click="openRefund(o.active_refund)">查看售后</el-button>
+            <el-button v-if="refundPending(o.active_refund.status)" size="small" @click="cancelRefund(o.active_refund)">撤销售后</el-button>
+            <el-button size="small" disabled>售后处理中，订单操作已暂停</el-button>
+          </template>
+          <template v-else-if="o.status === 'pending_payment'">
             <el-button type="primary" size="small" @click="pay(o.id)">去付款</el-button>
             <el-button size="small" @click="cancel(o.id)">取消订单</el-button>
           </template>
           <template v-else-if="o.status === 'pending_shipment'">
+            <el-button type="warning" plain size="small" @click="applyRefund(o)">申请售后</el-button>
             <el-button size="small" disabled>等待卖家发货</el-button>
           </template>
           <template v-else-if="o.status === 'shipped'">
+            <el-button type="warning" plain size="small" @click="applyRefund(o)">申请售后</el-button>
             <el-button type="primary" size="small" @click="receive(o.id)">确认收货</el-button>
           </template>
           <template v-else-if="o.status === 'received'">
+            <el-button type="warning" plain size="small" @click="applyRefund(o)">申请售后</el-button>
             <el-button type="primary" size="small" @click="complete(o.id)">完成交易</el-button>
           </template>
           <template v-else-if="o.status === 'completed'">
@@ -70,19 +87,26 @@
       <el-button type="primary" @click="submitReview">提交</el-button>
     </template>
   </el-dialog>
+
+  <RefundApplyDialog v-model="applyDialog" :order="applyOrder" @applied="load(page)" />
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import * as orderApi from '../api/order'
 import * as reviewApi from '../api/review'
+import * as refundApi from '../api/refund'
 import StatusBadge from '../components/StatusBadge.vue'
 import EmptyState from '../components/EmptyState.vue'
-import { formatPrice } from '../utils/format'
+import RefundApplyDialog from '../components/RefundApplyDialog.vue'
+import { formatPrice, formatCondition } from '../utils/format'
+import type { OrderVO, RefundVO } from '../api/types'
 
+const router = useRouter()
 const tab = ref('all')
-const orders = ref<any[]>([])
+const orders = ref<OrderVO[]>([])
 const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
@@ -90,7 +114,14 @@ const pageSize = 10
 const reviewDialog = ref(false)
 const reviewForm = ref<{ order_id: number; rating: string; content: string }>({ order_id: 0, rating: 'good', content: '' })
 
+const applyDialog = ref(false)
+const applyOrder = ref<OrderVO | null>(null)
+
 onMounted(() => load(1))
+
+function refundPending(status: string) {
+  return status === 'pending_seller' || status === 'proposal_pending'
+}
 
 async function load(p: number) {
   loading.value = true
@@ -98,10 +129,7 @@ async function load(p: number) {
     const params: Record<string, unknown> = { page: p, page_size: pageSize }
     if (tab.value !== 'all') params.status = tab.value
     const res: any = await orderApi.listOrders(params)
-    orders.value = (res.data.list || []).map((o: any) => ({
-      ...o,
-      product: o.product ? { ...o.product, condition_text: '' } : undefined
-    }))
+    orders.value = res.data.list || []
     total.value = Number(res.data.total || 0)
     page.value = p
   } finally {
@@ -133,7 +161,7 @@ async function complete(id: number) {
   load(page.value)
 }
 
-function review(o: any) {
+function review(o: OrderVO) {
   reviewForm.value = { order_id: o.id, rating: 'good', content: '' }
   reviewDialog.value = true
 }
@@ -142,6 +170,27 @@ async function submitReview() {
   await reviewApi.createReview(reviewForm.value)
   reviewDialog.value = false
   ElMessage.success('评价成功')
+}
+
+function applyRefund(o: OrderVO) {
+  applyOrder.value = o
+  applyDialog.value = true
+}
+
+// 订单列表内嵌的售后仅含协商历史摘要，查看时拉取详情并跳转售后中心。
+function openRefund(rf: RefundVO) {
+  router.push({ path: '/refunds', query: { id: rf.id } })
+}
+
+async function cancelRefund(rf: RefundVO) {
+  try {
+    await ElMessageBox.confirm('撤销售后后订单恢复原状态，确定撤销吗？', '撤销售后', { type: 'warning' })
+  } catch {
+    return
+  }
+  await refundApi.cancelRefund(rf.id)
+  ElMessage.success('售后已撤销，订单恢复原状态')
+  load(page.value)
 }
 </script>
 
@@ -193,6 +242,21 @@ async function submitReview() {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+.badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.refund-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.refund-link {
+  color: #e6a23c;
+  font-size: 12px;
 }
 .pager {
   display: flex;

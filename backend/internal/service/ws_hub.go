@@ -14,14 +14,14 @@ import (
 
 // WSMessage 通过 WebSocket 推送给前端的消息载荷。
 type WSMessage struct {
-	Type      string `json:"type"`
-	MessageID uint   `json:"message_id,omitempty"`
-	SenderID  uint   `json:"sender_id"`
-	ReceiverID uint  `json:"receiver_id"`
-	ProductID uint   `json:"product_id,omitempty"`
-	Content   string `json:"content"`
-	CreatedAt string `json:"created_at"`
-	Unread    int64  `json:"unread,omitempty"`
+	Type       string `json:"type"`
+	MessageID  uint   `json:"message_id,omitempty"`
+	SenderID   uint   `json:"sender_id"`
+	ReceiverID uint   `json:"receiver_id"`
+	ProductID  uint   `json:"product_id,omitempty"`
+	Content    string `json:"content"`
+	CreatedAt  string `json:"created_at"`
+	Unread     int64  `json:"unread,omitempty"`
 }
 
 // Client 单个 WebSocket 连接。

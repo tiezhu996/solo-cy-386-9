@@ -17,7 +17,8 @@ func newTestDB(t *testing.T) *gorm.DB {
 	}
 	models := []interface{}{
 		&model.User{}, &model.Product{}, &model.Favorite{}, &model.Address{},
-		&model.CartItem{}, &model.Order{}, &model.Message{}, &model.Review{}, &model.AuditLog{},
+		&model.CartItem{}, &model.Order{}, &model.Refund{}, &model.RefundNegotiation{},
+		&model.Message{}, &model.Review{}, &model.AuditLog{},
 	}
 	if err := db.AutoMigrate(models...); err != nil {
 		t.Fatalf("auto migrate: %v", err)

@@ -33,6 +33,8 @@ func Connect(cfg *config.Config, log *slog.Logger) (*gorm.DB, error) {
 		&model.Address{},
 		&model.CartItem{},
 		&model.Order{},
+		&model.Refund{},
+		&model.RefundNegotiation{},
 		&model.Message{},
 		&model.Review{},
 		&model.AuditLog{},

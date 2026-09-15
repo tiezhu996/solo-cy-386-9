@@ -115,3 +115,53 @@ func FormatRoleText(role string) string {
 func FormatPrice(price float64) string {
 	return fmt.Sprintf("%.2f", price)
 }
+
+// FormatRefundTypeText 售后类型 → 中文文案（与前端 constants 同步）。
+func FormatRefundTypeText(t string) string {
+	switch t {
+	case "return_refund":
+		return "退货退款"
+	case "partial_refund":
+		return "部分退款"
+	default:
+		return "未知"
+	}
+}
+
+// FormatRefundStatusText 售后状态 → 中文文案（售后状态机的展示层触点）。
+func FormatRefundStatusText(status string) string {
+	switch status {
+	case "pending_seller":
+		return "待卖家处理"
+	case "proposal_pending":
+		return "待买家确认方案"
+	case "agreed":
+		return "退款成功"
+	case "rejected":
+		return "卖家已拒绝"
+	case "cancelled":
+		return "买家已撤销"
+	default:
+		return "未知"
+	}
+}
+
+// FormatRefundActionText 协商动作 → 中文文案（协商历史时间线展示）。
+func FormatRefundActionText(action string) string {
+	switch action {
+	case "apply":
+		return "买家发起售后"
+	case "agree":
+		return "卖家同意退款"
+	case "reject":
+		return "卖家拒绝"
+	case "propose":
+		return "卖家提出方案"
+	case "accept":
+		return "买家接受方案"
+	case "cancel":
+		return "买家撤销售后"
+	default:
+		return action
+	}
+}

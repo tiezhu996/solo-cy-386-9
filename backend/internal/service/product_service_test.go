@@ -85,7 +85,9 @@ func (f *fakeFavoriteRepo) ListByUser(userID uint, page, pageSize int) ([]model.
 	return nil, 0, nil
 }
 
-func key(a, b uint) string { return strconv.FormatUint(uint64(a), 10) + "-" + strconv.FormatUint(uint64(b), 10) }
+func key(a, b uint) string {
+	return strconv.FormatUint(uint64(a), 10) + "-" + strconv.FormatUint(uint64(b), 10)
+}
 
 func newTestProductService() (*ProductService, *fakeProductRepo, *fakeFavoriteRepo) {
 	pr := newFakeProductRepo()

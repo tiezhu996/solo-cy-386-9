@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -46,14 +46,20 @@ func TestCanRefundTransition(t *testing.T) {
 	}
 }
 
-// newRefundTestDB 准备独立的内存库与售后夹具：买家 100、卖家 200、商品、已付款订单。
+// newRefundTestDB 准备独立的磁盘库与售后夹具：买家 100、卖家 200、商品、已付款订单。
+// 每次调用在独立临时目录落盘（WAL + BEGIN IMMEDIATE），重复执行（-count=N）与用例之间不共享数据。
 func newRefundTestDB(t *testing.T) (*gorm.DB, *RefundService, *model.Order) {
 	t.Helper()
-	// 每次打开使用全新内存库（同一测试内多个 repo 共享该连接），避免重复运行唯一键冲突。
-	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "_" + fmt.Sprint(seq.Add(1)) + "?mode=memory&cache=shared"
+	path := filepath.Join(t.TempDir(), fmt.Sprintf("legacy_refund_%d.db", seq.Add(1)))
+	dsn := filepath.ToSlash(path) +
+		"?_txlock=immediate&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
+	}
+	if sqlDB, derr := db.DB(); derr == nil {
+		sqlDB.SetMaxOpenConns(8)
+		sqlDB.SetMaxIdleConns(4)
 	}
 	models := []interface{}{
 		&model.User{}, &model.Product{}, &model.Address{}, &model.Order{},

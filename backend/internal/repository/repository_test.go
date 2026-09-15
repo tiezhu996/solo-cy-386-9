@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -8,10 +9,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// newTestDB 创建内存 SQLite 数据库并迁移模型。
+// newTestDB 创建独立的磁盘 SQLite 数据库并迁移模型。
+// 每个用例使用 t.TempDir() 下的全新文件（WAL + busy_timeout），
+// 重复执行（-count=N）与用例之间都不会共享数据，避免串扰。
 func newTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	dsn := filepath.ToSlash(filepath.Join(t.TempDir(), "test.db")) +
+		"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

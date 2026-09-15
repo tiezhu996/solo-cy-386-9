@@ -97,6 +97,11 @@ cd backend
 go build ./...
 go vet ./...
 go test ./...
+# 售后并发回归默认使用独立磁盘 SQLite（WAL + BEGIN IMMEDIATE，多连接真实竞争），可重复执行：
+go test ./internal/service/ -run TestPersist -count=3
+# 设置 DSN 后同一套并发/顺序回归改走真实 PostgreSQL（SELECT ... FOR UPDATE）：
+MARKETPAL_TEST_POSTGRES_DSN='host=localhost port=44014 user=marketpal_user password=marketpal_pwd dbname=marketpal_db sslmode=disable' \
+  go test ./internal/service/ -run TestPersist -v
 ```
 
 ### 前端
@@ -365,7 +370,7 @@ curl -sS "http://localhost:19406/api/v1/refunds?role=buyer&page=1&page_size=10" 
 - `backend/internal/util/formatters.go`（FormatRefundTypeText/FormatRefundStatusText/FormatRefundActionText）
 - `backend/internal/middleware/error_handler.go`（售后错误码 → HTTP 状态映射）
 - `backend/internal/database/database.go`（AutoMigrate 注册新模型）、`backend/migrations/001_init.sql`（refunds/refund_negotiations/orders.active_refund_id）
-- 测试：`backend/internal/service/refund_service_test.go`、`backend/internal/repository/refund_repository_test.go`
+- 测试：`backend/internal/service/refund_persist_test.go`（独立磁盘库/可选 Postgres 夹具与跨层一致性断言）、`refund_persist_seq_test.go`（退货退款全额/部分退款方案/终态回读/重复申请幂等）、`refund_persist_concurrent_test.go`（独立连接真实并发：卖家同意 vs 买家撤销、重复同意、终态后并发）、`refund_service_test.go`、`backend/internal/repository/refund_repository_test.go`
 
 前端出现位置：
 

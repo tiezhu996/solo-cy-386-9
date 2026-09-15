@@ -13,7 +13,8 @@
       <el-form-item label="退款金额">
         <el-input-number v-model="form.amount" :min="0.01" :max="maxAmount" :precision="2" :step="10"
           :disabled="form.type === 'return_refund'" />
-        <span class="muted">实付 ¥{{ formatPrice(order?.total_price || 0) }}，不可超过</span>
+        <span v-if="form.type === 'return_refund'" class="muted">退货退款须按实付 ¥{{ formatPrice(order?.total_price || 0) }} 全额</span>
+        <span v-else class="muted">实付 ¥{{ formatPrice(order?.total_price || 0) }}，不可超过</span>
       </el-form-item>
       <el-form-item label="申请原因">
         <el-input v-model="form.reason" type="textarea" :rows="3" maxlength="500" show-word-limit
@@ -81,6 +82,10 @@ async function submit() {
     return
   }
   const amount = Number(form.value.amount.toFixed(2))
+  if (form.value.type === 'return_refund' && amount !== maxAmount.value) {
+    ElMessage.error('退货退款必须按实付金额全额申请')
+    return
+  }
   if (!(amount > 0) || amount > maxAmount.value) {
     ElMessage.error(`退款金额必须在 0.01 ~ ${maxAmount.value} 之间`)
     return

@@ -25,10 +25,17 @@
           <div class="info">
             <div class="title">{{ o.product?.title }}</div>
             <div class="sub">{{ o.product ? formatCondition(o.product.condition) : '' }} × {{ o.quantity }}</div>
+            <!-- 进行中售后 -->
             <div v-if="o.active_refund" class="refund-line" @click.stop="openRefund(o.active_refund)">
               <StatusBadge type="refundType" :value="o.active_refund.type" />
               <StatusBadge type="refund" :value="o.active_refund.status" />
               <span class="refund-link">查看售后协商 ›</span>
+            </div>
+            <!-- 已完结售后：展示最新结果，不再出现申请入口 -->
+            <div v-else-if="o.last_refund" class="refund-line" @click.stop="openRefund(o.last_refund)">
+              <StatusBadge type="refundType" :value="o.last_refund.type" />
+              <StatusBadge type="refund" :value="o.last_refund.status" />
+              <span class="refund-link">查看售后结果 ›</span>
             </div>
           </div>
           <div class="amount">¥{{ formatPrice(o.total_price) }}</div>
@@ -45,15 +52,15 @@
             <el-button size="small" @click="cancel(o.id)">取消订单</el-button>
           </template>
           <template v-else-if="o.status === 'pending_shipment'">
-            <el-button type="warning" plain size="small" @click="applyRefund(o)">申请售后</el-button>
+            <el-button v-if="!o.last_refund" type="warning" plain size="small" @click="applyRefund(o)">申请售后</el-button>
             <el-button size="small" disabled>等待卖家发货</el-button>
           </template>
           <template v-else-if="o.status === 'shipped'">
-            <el-button type="warning" plain size="small" @click="applyRefund(o)">申请售后</el-button>
+            <el-button v-if="!o.last_refund" type="warning" plain size="small" @click="applyRefund(o)">申请售后</el-button>
             <el-button type="primary" size="small" @click="receive(o.id)">确认收货</el-button>
           </template>
           <template v-else-if="o.status === 'received'">
-            <el-button type="warning" plain size="small" @click="applyRefund(o)">申请售后</el-button>
+            <el-button v-if="!o.last_refund" type="warning" plain size="small" @click="applyRefund(o)">申请售后</el-button>
             <el-button type="primary" size="small" @click="complete(o.id)">完成交易</el-button>
           </template>
           <template v-else-if="o.status === 'completed'">
@@ -173,6 +180,8 @@ async function submitReview() {
 }
 
 function applyRefund(o: OrderVO) {
+  // 二次防护：已有任何售后（进行中或已完结）都不再进入必然失败的申请流程。
+  if (o.active_refund || o.last_refund) return
   applyOrder.value = o
   applyDialog.value = true
 }

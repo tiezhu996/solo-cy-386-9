@@ -164,6 +164,66 @@ func TestRefundReturnAgreeCancelsOrder(t *testing.T) {
 	}
 }
 
+func TestReturnRefundMustBeFullAmount(t *testing.T) {
+	_, svc, o := newRefundTestDB(t)
+
+	// 退货退款按低于实付的金额申请必须被拒绝（不能 1 元退款就让订单取消/重新上架）。
+	low := applyReq(o.ID, 1)
+	low.Type = constants.RefundTypeReturn
+	_, err := svc.Apply(100, low)
+	if asAppError(t, err).Code != constants.CodeRefundAmountExceed {
+		t.Fatalf("return refund below paid amount should fail, got %v", err)
+	}
+
+	// 退货退款按全额申请成功后，卖家不能再提部分金额方案，只能同意/拒绝。
+	full := applyReq(o.ID, 100)
+	full.Type = constants.RefundTypeReturn
+	rf, err := svc.Apply(100, full)
+	if err != nil {
+		t.Fatalf("full amount return refund apply: %v", err)
+	}
+	if _, err := svc.Propose(200, rf.ID, dto.RefundProposeRequest{Amount: 50, Reason: "只退一半"}); err == nil {
+		t.Fatal("propose partial amount on return refund should fail")
+	}
+
+	// 同意路径同样校验全额：篡改申请金额（模拟脏数据）时 agree 不得放行。
+	if _, err := svc.Agree(200, rf.ID); err != nil {
+		t.Fatalf("agree full return refund: %v", err)
+	}
+}
+
+func TestPartialRefundAllowsAmountBelowPaid(t *testing.T) {
+	_, svc, o := newRefundTestDB(t)
+	// 部分退款允许低于实付、不超过实付，保持原行为。
+	rf, err := svc.Apply(100, applyReq(o.ID, 30))
+	if err != nil {
+		t.Fatalf("partial refund apply: %v", err)
+	}
+	if _, err := svc.Propose(200, rf.ID, dto.RefundProposeRequest{Amount: 20, Reason: "只同意 20"}); err != nil {
+		t.Fatalf("propose on partial refund should succeed, got %v", err)
+	}
+}
+
+func TestOrderReadsLatestRefundAfterClosed(t *testing.T) {
+	db, svc, o := newRefundTestDB(t)
+	orderRepo := repository.NewOrderRepository(db)
+	rf, _ := svc.Apply(100, applyReq(o.ID, 30))
+	// 拒绝后 active_refund_id 清空，但订单详情仍能读到最近一笔完结售后。
+	if _, err := svc.Reject(200, rf.ID, dto.RefundRejectRequest{Reason: "凭证不足"}); err != nil {
+		t.Fatalf("Reject: %v", err)
+	}
+	got, err := orderRepo.GetByID(o.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ActiveRefundID != nil || got.ActiveRefund != nil {
+		t.Fatal("active refund must be cleared after reject")
+	}
+	if got.LastRefund == nil || got.LastRefund.Status != constants.RefundStatusRejected {
+		t.Fatalf("last refund must be readable after closed, got %+v", got.LastRefund)
+	}
+}
+
 func TestRefundRejectResumesOrderAndBlocksReapply(t *testing.T) {
 	_, svc, o := newRefundTestDB(t)
 	rf, _ := svc.Apply(100, applyReq(o.ID, 30))

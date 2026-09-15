@@ -72,6 +72,7 @@ export interface OrderVO {
   buyer?: UserVO
   seller?: UserVO
   active_refund?: RefundVO
+  last_refund?: RefundVO
 }
 
 export interface RefundNegotiationVO {

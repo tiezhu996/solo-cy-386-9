@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/marketpal/marketpal/internal/constants"
 	"github.com/marketpal/marketpal/internal/model"
 	"gorm.io/gorm"
 )
@@ -55,60 +56,69 @@ func (r *orderRepo) GetByID(id uint) (*model.Order, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get order by id %d: %w", id, err)
 	}
-	if err := r.loadActiveRefund(&o); err != nil {
+	if err := r.loadRefund(&o); err != nil {
 		return nil, err
 	}
 	return &o, nil
 }
 
-// loadActiveRefund 手动加载订单的进行中售后单与协商历史（ActiveRefund 为 gorm:"-" 非外键字段）。
-func (r *orderRepo) loadActiveRefund(o *model.Order) error {
-	if o.ActiveRefundID == nil {
-		return nil
-	}
+// loadRefund 加载订单关联的售后单：一个订单至多一条（order_id 唯一）。
+// 无论进行中还是已完结都赋值到 LastRefund；进行中额外赋值到 ActiveRefund。
+func (r *orderRepo) loadRefund(o *model.Order) error {
 	var rf model.Refund
 	err := r.db.
 		Preload("Negotiations", func(db *gorm.DB) *gorm.DB { return db.Order("id ASC") }).
-		First(&rf, *o.ActiveRefundID).Error
+		Where("order_id = ?", o.ID).First(&rf).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("active refund %d of order %d missing: %w", *o.ActiveRefundID, o.ID, ErrNotFound)
+		return nil // 无售后单属正常情况
 	}
 	if err != nil {
-		return fmt.Errorf("load active refund %d: %w", *o.ActiveRefundID, err)
+		return fmt.Errorf("load refund of order %d: %w", o.ID, err)
 	}
-	o.ActiveRefund = &rf
+	o.LastRefund = &rf
+	if o.ActiveRefundID != nil && rf.ID == *o.ActiveRefundID && !isFinalRefundStatus(rf.Status) {
+		o.ActiveRefund = &rf
+	}
 	return nil
 }
 
-// loadActiveRefundBatch 批量加载列表中各订单的进行中售后单（避免 N+1）。
-func (r *orderRepo) loadActiveRefundBatch(orders []model.Order) error {
-	ids := make([]uint, 0)
-	seen := map[uint]bool{}
-	for i := range orders {
-		if orders[i].ActiveRefundID != nil && !seen[*orders[i].ActiveRefundID] {
-			ids = append(ids, *orders[i].ActiveRefundID)
-			seen[*orders[i].ActiveRefundID] = true
-		}
-	}
-	if len(ids) == 0 {
+// loadRefundBatch 批量加载各订单关联的售后单（含完结），避免 N+1。
+func (r *orderRepo) loadRefundBatch(orders []model.Order) error {
+	if len(orders) == 0 {
 		return nil
+	}
+	orderIDs := make([]uint, 0, len(orders))
+	for i := range orders {
+		orderIDs = append(orderIDs, orders[i].ID)
 	}
 	var refunds []model.Refund
 	if err := r.db.
 		Preload("Negotiations", func(db *gorm.DB) *gorm.DB { return db.Order("id ASC") }).
-		Where("id IN ?", ids).Find(&refunds).Error; err != nil {
-		return fmt.Errorf("load active refunds batch: %w", err)
+		Where("order_id IN ?", orderIDs).Find(&refunds).Error; err != nil {
+		return fmt.Errorf("load refunds batch: %w", err)
 	}
-	byID := map[uint]*model.Refund{}
+	byOrder := map[uint]*model.Refund{}
 	for i := range refunds {
-		byID[refunds[i].ID] = &refunds[i]
+		byOrder[refunds[i].OrderID] = &refunds[i]
 	}
 	for i := range orders {
-		if orders[i].ActiveRefundID != nil {
-			orders[i].ActiveRefund = byID[*orders[i].ActiveRefundID]
+		rf := byOrder[orders[i].ID]
+		if rf == nil {
+			continue
+		}
+		orders[i].LastRefund = rf
+		if orders[i].ActiveRefundID != nil && rf.ID == *orders[i].ActiveRefundID && !isFinalRefundStatus(rf.Status) {
+			orders[i].ActiveRefund = rf
 		}
 	}
 	return nil
+}
+
+// isFinalRefundStatus 判断售后状态是否已完结（agreed/rejected/cancelled）。
+func isFinalRefundStatus(status string) bool {
+	return status == constants.RefundStatusAgreed ||
+		status == constants.RefundStatusRejected ||
+		status == constants.RefundStatusCancelled
 }
 
 func (r *orderRepo) GetByIDForUpdate(tx *gorm.DB, id uint) (*model.Order, error) {
@@ -137,7 +147,7 @@ func (r *orderRepo) ListByBuyer(buyerID uint, status string, page, pageSize int)
 		Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&orders).Error; err != nil {
 		return nil, 0, fmt.Errorf("list buyer orders: %w", err)
 	}
-	if err := r.loadActiveRefundBatch(orders); err != nil {
+	if err := r.loadRefundBatch(orders); err != nil {
 		return nil, 0, err
 	}
 	return orders, total, nil
@@ -157,7 +167,7 @@ func (r *orderRepo) ListBySeller(sellerID uint, status string, page, pageSize in
 		Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&orders).Error; err != nil {
 		return nil, 0, fmt.Errorf("list seller orders: %w", err)
 	}
-	if err := r.loadActiveRefundBatch(orders); err != nil {
+	if err := r.loadRefundBatch(orders); err != nil {
 		return nil, 0, err
 	}
 	return orders, total, nil

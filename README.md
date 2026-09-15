@@ -24,7 +24,7 @@ docker compose up -d --build
 2. 商品浏览与搜索：瀑布流展示、关键词/分类/价格区间/成色筛选、价格与发布时间排序
 3. 商品详情：图片轮播、卖家信息、收藏、联系卖家（站内私信）
 4. 购物车与下单：加购、选择收货地址、确认下单、订单状态流转（待付款→待发货→已发货→已收货→已完成）
-5. 售后处理：买家在完成交易前可对已付款订单发起一轮退货退款/部分退款（原因、金额、凭证），卖家可同意、拒绝或提出一次方案；卖家处理前买方可撤销；售后中订单暂停发货、收货、完成与评价；协商历史全程可回读
+5. 售后处理：买家在完成交易前可对已付款订单发起一轮退货退款/部分退款（原因、金额、凭证），其中退货退款必须按实付金额全额申请，部分退款金额在 0~实付之间；卖家可同意、拒绝或提出一次方案；卖家处理前买方可撤销；售后中订单暂停发货、收货、完成与评价；拒绝/撤销/退款后订单页展示最新售后结果且不能再次申请；协商历史全程可回读
 6. 用户私信：买卖双方站内文字沟通，WebSocket 实时推送
 7. 评价系统：交易完成后互评（好评/中评/差评），影响信用积分
 8. 个人中心：我的发布、我的收藏、我的订单、售后管理、收货地址管理、信用积分展示
@@ -345,17 +345,17 @@ curl -sS "http://localhost:19406/api/v1/refunds?role=buyer&page=1&page_size=10" 
 
 ### 7. 售后类型/状态/动作 Refund（return_refund|partial_refund；pending_seller/proposal_pending/agreed/rejected/cancelled；apply/agree/reject/propose/accept/cancel）
 
-业务规则：买家仅可对已付款且完成交易前（待发货/已发货/已收货）的订单发起一轮售后；卖家可同意、拒绝或提出一次方案；卖家处理前买方可撤销；售后中订单暂停发货、收货、完成与评价；仅买卖双方可查看和操作；退款金额不能超过实付；所有多步写在同一事务内以固定顺序（订单行 → 售后单行）`SELECT ... FOR UPDATE` + 条件状态更新，并发处理只能有一个结果；协商历史只追加，重复提交不能改写记录。
+业务规则：买家仅可对已付款且完成交易前（待发货/已发货/已收货）的订单发起一轮售后；**退货退款必须按订单实付金额全额申请/同意，且卖家不能就退货退款提部分金额方案（只能同意或拒绝）；部分退款金额必须大于 0 且不超过实付**；卖家可同意、拒绝或提出一次方案；卖家处理前买方可撤销；售后中订单暂停发货、收货、完成与评价；拒绝/撤销/退款成功后该订单仍可在列表/详情回读到最近一笔售后结果（`last_refund`），申请入口隐藏，后端同样拒绝重复申请；仅买卖双方可查看和操作；所有多步写在同一事务内以固定顺序（订单行 → 售后单行）`SELECT ... FOR UPDATE` + 条件状态更新，并发处理只能有一个结果；协商历史只追加，重复提交不能改写记录。
 
 后端出现位置：
 
 - `backend/internal/constants/enums.go`（RefundType/RefundStatus/RefundAction 定义 + `RefundStatusTransitions` 状态机 + `RefundFinalStatuses`/`CanRefundTransition`/`ValidRefund*`/`RefundableOrderStatuses`）
 - `backend/internal/model/refund.go`（Refund、RefundNegotiation 实体；order_id 唯一索引杜绝重复申请）
-- `backend/internal/model/order.go`（`ActiveRefundID` 售后中标记，ActiveRefund 为非外键手动加载字段，避免 orders↔refunds 循环约束）
+- `backend/internal/model/order.go`（`ActiveRefundID` 售后中标记；ActiveRefund/LastRefund 为非外键手动加载字段，避免 orders↔refunds 循环约束）
 - `backend/internal/dto/refund_dto.go`（申请/拒绝/方案入参 oneof/gt 校验、RefundVO/RefundNegotiationVO）
 - `backend/internal/repository/refund_repository.go`（ForUpdate 行锁、`TransitForUpdate` 条件流转、协商历史只追加）
-- `backend/internal/repository/order_repository.go`（`SetActiveRefundForUpdate`、列表/详情手动回读 ActiveRefund）
-- `backend/internal/service/refund_service.go`（Apply/Agree/Reject/Propose/Accept/Cancel 状态机 + 幂等 + 金额上限校验 + 事务）
+- `backend/internal/repository/order_repository.go`（`SetActiveRefundForUpdate`、列表/详情回读 ActiveRefund 进行中售后与 LastRefund 最近一笔含完结售后）
+- `backend/internal/service/refund_service.go`（Apply/Agree/Reject/Propose/Accept/Cancel 状态机 + 幂等 + `validateApplyAmount` 退货退款全额/部分退款上限校验 + 事务）
 - `backend/internal/service/order_service.go`（Ship/Receive/Complete/Cancel 中 `ensureNoActiveRefund` 拦截）
 - `backend/internal/service/review_service.go`（售后中暂停评价的二次防护）
 - `backend/internal/handler/refund_handler.go`、`backend/internal/router/refund.go`（售后路由与参数校验）
@@ -370,12 +370,12 @@ curl -sS "http://localhost:19406/api/v1/refunds?role=buyer&page=1&page_size=10" 
 前端出现位置：
 
 - `frontend/src/constants/index.ts`（RefundType/RefundStatus/RefundAction 文案与徽标色）
-- `frontend/src/api/types.ts`（RefundVO/RefundNegotiationVO，OrderVO.active_refund）、`frontend/src/api/refund.ts`
+- `frontend/src/api/types.ts`（RefundVO/RefundNegotiationVO，OrderVO.active_refund/last_refund）、`frontend/src/api/refund.ts`
 - `frontend/src/components/StatusBadge.vue`（refund/refundType 徽标）
-- `frontend/src/components/RefundApplyDialog.vue`（申请表单：类型/金额/原因/凭证，金额上限实付）
+- `frontend/src/components/RefundApplyDialog.vue`（申请表单：类型/金额/原因/凭证，退货退款固定实付全额、部分退款不超过实付）
 - `frontend/src/components/RefundSellerDialog.vue`（卖家同意/拒绝/提方案）
 - `frontend/src/components/RefundTimeline.vue`（协商历史时间线）
-- `frontend/src/pages/OrdersPage.vue`（申请入口、售后中暂停按钮与回读、撤销）
+- `frontend/src/pages/OrdersPage.vue`（申请入口；有进行中或已完结售后即隐藏入口并回读最新售后状态、撤销）
 - `frontend/src/pages/RefundsPage.vue`（售后中心买/卖双视角、详情、状态筛选）
 - `frontend/src/utils/format.ts`（formatRefundType/formatRefundStatus）、`frontend/src/router/index.ts`（/refunds 路由）
 

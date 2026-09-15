@@ -55,8 +55,10 @@ func (s *RefundService) Apply(buyerID uint, req dto.RefundApplyRequest) (*model.
 		if o.PaidAt == nil || !constants.RefundableOrderStatuses[o.Status] {
 			return utilAppError(constants.CodeOrderStateInvalid, "发起售后失败：订单 "+o.OrderNo+" 当前状态为 "+o.Status+"，仅已付款且完成交易前可申请售后", nil)
 		}
-		if req.Amount > o.TotalPrice+amountEpsilon {
-			return utilAppError(constants.CodeRefundAmountExceed, fmt.Sprintf("发起售后失败：退款金额 %.2f 超过订单 %s 实付金额 %.2f", req.Amount, o.OrderNo, o.TotalPrice), nil)
+		// 退货退款必须按实付金额全额申请（同意后订单将取消并重新上架，不能只退部分金额）；
+		// 部分退款只要求 0 < 金额 ≤ 实付，两者规则在此明确区分。
+		if err := validateApplyAmount(req.Type, req.Amount, o.TotalPrice, o.OrderNo); err != nil {
+			return err
 		}
 		existing, err := s.refundRepo.GetByOrderIDForUpdate(tx, o.ID)
 		if err != nil && !errors.Is(err, repository.ErrNotFound) {
@@ -163,8 +165,9 @@ func (s *RefundService) sellerResolve(sellerID, refundID uint, action string, am
 			if !constants.CanRefundTransition(rf.Status, constants.RefundStatusAgreed) || rf.Status != constants.RefundStatusPendingSeller {
 				return utilAppError(constants.CodeRefundStateInvalid, "同意售后失败：售后单 "+rf.RefundNo+" 当前状态 "+rf.Status+" 不允许卖家同意", nil)
 			}
-			if rf.ApplyAmount > o.TotalPrice+amountEpsilon {
-				return utilAppError(constants.CodeRefundAmountExceed, fmt.Sprintf("同意售后失败：退款金额 %.2f 超过订单 %s 实付金额 %.2f", rf.ApplyAmount, o.OrderNo, o.TotalPrice), nil)
+			// 与申请环节同一套金额规则：退货退款必须全额，部分退款不超过实付。
+			if err := validateApplyAmount(rf.Type, rf.ApplyAmount, o.TotalPrice, o.OrderNo); err != nil {
+				return err
 			}
 			finalAmount := rf.ApplyAmount
 			ok, err := s.refundRepo.TransitForUpdate(tx, rf.ID, []string{constants.RefundStatusPendingSeller}, map[string]interface{}{
@@ -216,8 +219,12 @@ func (s *RefundService) sellerResolve(sellerID, refundID uint, action string, am
 			if rf.Status != constants.RefundStatusPendingSeller {
 				return utilAppError(constants.CodeRefundStateInvalid, "提出方案失败：售后单 "+rf.RefundNo+" 当前状态 "+rf.Status+" 不允许再提方案（每轮仅一次）", nil)
 			}
-			if amount > o.TotalPrice+amountEpsilon {
-				return utilAppError(constants.CodeRefundAmountExceed, fmt.Sprintf("提出方案失败：方案金额 %.2f 超过订单 %s 实付金额 %.2f", amount, o.OrderNo, o.TotalPrice), nil)
+			// 退货退款只能全额：卖家不能用低于实付的方案替代，请直接同意或拒绝。
+			if rf.Type == constants.RefundTypeReturn {
+				return utilAppError(constants.CodeRefundStateInvalid, "提出方案失败：退货退款售后单 "+rf.RefundNo+" 只能按实付全额处理，不能提出部分退款方案，请直接同意或拒绝", nil)
+			}
+			if amount <= 0 || amount > o.TotalPrice+amountEpsilon {
+				return utilAppError(constants.CodeRefundAmountExceed, fmt.Sprintf("提出方案失败：方案金额 %.2f 必须大于 0 且不超过订单 %s 实付金额 %.2f", amount, o.OrderNo, o.TotalPrice), nil)
 			}
 			ok, err := s.refundRepo.TransitForUpdate(tx, rf.ID, []string{constants.RefundStatusPendingSeller}, map[string]interface{}{
 				"status": constants.RefundStatusProposalPending, "proposal_amount": amount, "proposal_reason": reason, "updated_at": now,
@@ -467,6 +474,26 @@ func toRefundVO(rf *model.Refund) *dto.RefundVO {
 // genRefundNo 生成售后单号：R + yyyyMMddHHmmss + 6 位随机数。
 func genRefundNo() string {
 	return fmt.Sprintf("R%s%06d", time.Now().Format("20060102150405"), rand.Intn(1000000))
+}
+
+// validateApplyAmount 申请/同意环节统一的金额规则，退货退款与部分退款在此明确区分：
+//   - 退货退款（return_refund）：必须按订单实付金额全额申请，少退会导致订单取消/重新上架却退款不足；
+//   - 部分退款（partial_refund）：金额必须大于 0 且不超过实付。
+func validateApplyAmount(refundType string, amount, paidAmount float64, orderNo string) error {
+	if refundType == constants.RefundTypeReturn {
+		if amount > paidAmount+amountEpsilon || math.Abs(amount-paidAmount) > amountEpsilon {
+			return utilAppError(constants.CodeRefundAmountExceed, fmt.Sprintf(
+				"退货退款必须按订单 %s 实付金额 %.2f 全额处理，当前金额 %.2f 不合法", orderNo, paidAmount, amount), nil)
+		}
+		return nil
+	}
+	if amount <= 0 {
+		return utilAppError(constants.CodeRefundAmountExceed, fmt.Sprintf("部分退款金额必须大于 0，订单 %s 当前金额 %.2f", orderNo, amount), nil)
+	}
+	if amount > paidAmount+amountEpsilon {
+		return utilAppError(constants.CodeRefundAmountExceed, fmt.Sprintf("退款金额 %.2f 超过订单 %s 实付金额 %.2f", amount, orderNo, paidAmount), nil)
+	}
+	return nil
 }
 
 // refundAmountValue 安全读取协商成功后的退款金额，记录未加载时记 0。

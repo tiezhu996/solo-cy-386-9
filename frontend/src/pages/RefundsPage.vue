@@ -44,7 +44,7 @@
             <template v-else>
               <template v-if="r.status === 'pending_seller'">
                 <el-button type="primary" size="small" @click="sellerAction('agree', r)">同意</el-button>
-                <el-button type="warning" size="small" @click="sellerAction('propose', r)">提方案</el-button>
+                <el-button v-if="r.type === 'partial_refund'" type="warning" size="small" @click="sellerAction('propose', r)">提方案</el-button>
                 <el-button type="danger" size="small" @click="sellerAction('reject', r)">拒绝</el-button>
               </template>
             </template>
@@ -102,7 +102,7 @@
         </template>
         <template v-else-if="current.status === 'pending_seller'">
           <el-button type="primary" @click="sellerAction('agree', current)">同意</el-button>
-          <el-button type="warning" @click="sellerAction('propose', current)">提方案</el-button>
+          <el-button v-if="current.type === 'partial_refund'" type="warning" @click="sellerAction('propose', current)">提方案</el-button>
           <el-button type="danger" @click="sellerAction('reject', current)">拒绝</el-button>
         </template>
       </div>

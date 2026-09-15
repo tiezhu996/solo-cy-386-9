@@ -43,6 +43,8 @@ type OrderVO struct {
 	Seller     *UserVO    `json:"seller,omitempty"`
 	// ActiveRefund 进行中的售后单：非空表示订单“售后中”，前端据此暂停发货/收货/完成/评价入口。
 	ActiveRefund *RefundVO `json:"active_refund,omitempty"`
+	// LastRefund 该订单最近一笔售后（含已完结）：前端据此展示最新售后结果，并隐藏已完结售后的申请入口。
+	LastRefund *RefundVO `json:"last_refund,omitempty"`
 }
 
 // OrderListResponse 订单列表分页响应。

@@ -36,4 +36,7 @@ type Order struct {
 	Address *Address `gorm:"foreignKey:AddressID" json:"address,omitempty"`
 	// ActiveRefund 不建数据库外键（避免 orders↔refunds 循环约束），由仓储按 ActiveRefundID 手动加载。
 	ActiveRefund *Refund `gorm:"-" json:"active_refund,omitempty"`
+	// LastRefund 该订单最近一笔售后单（含已完结：agreed/rejected/cancelled），同样不建外键、由仓储手动加载。
+	// 前端据此展示最新售后结果，并对已有完结售后的订单隐藏申请入口（提交必然失败）。
+	LastRefund *Refund `gorm:"-" json:"last_refund,omitempty"`
 }

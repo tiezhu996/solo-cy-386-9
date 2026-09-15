@@ -113,6 +113,10 @@ func FromOrder(o *model.Order) OrderVO {
 		rf := FromRefund(o.ActiveRefund)
 		vo.ActiveRefund = &rf
 	}
+	if o.LastRefund != nil {
+		rf := FromRefund(o.LastRefund)
+		vo.LastRefund = &rf
+	}
 	return vo
 }
 

@@ -37,10 +37,12 @@ var envSeq atomic.Uint64
 
 // persistEnv 一套独立持久化环境。
 type persistEnv struct {
-	t      *testing.T
-	driver string // "sqlite" 或 "postgres"
-	dsn    string
-	db     *gorm.DB // 主连接（建表、准备数据、最终回读）
+	t        *testing.T
+	driver   string // "sqlite" 或 "postgres"
+	dsn      string // 已带命名空间（Postgres 为 search_path 指向本次运行的专用 schema）
+	adminDB  *gorm.DB
+	db       *gorm.DB // 主连接（建表、准备数据、最终回读）
+	nsSchema string   // Postgres 本次运行的专用 schema（清理时仅 DROP 它）
 }
 
 // openPersistEnv 打开一套全新环境：有 PostgreSQL DSN 走 Postgres，否则用独立磁盘 SQLite 文件。
@@ -69,24 +71,144 @@ func openSQLiteEnv(t *testing.T) *persistEnv {
 	}
 	tunePool(db)
 	t.Cleanup(func() { _ = db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`).Error })
-	return &persistEnv{t: t, driver: "sqlite", dsn: dsn, db: db}
+	return &persistEnv{t: t, driver: "sqlite", dsn: dsn, adminDB: db, db: db}
 }
 
-func openPostgresEnv(t *testing.T, dsn string) *persistEnv {
+// Postgres 安全门相关常量。
+const (
+	// pgConfirmToken 必须由运维显式设置，语义为“我确认目标库是无业务数据的专用验证库”。
+	pgConfirmToken = "i-confirm-empty-dedicated-test-db"
+	// pgConfirmEnv 显式确认开关；只给一个 DSN 不构成清库/建命名空间授权。
+	pgConfirmEnv = "MARKETPAL_TEST_DEDICATED_CONFIRM"
+	// pgDBNameAllowEnv 额外允许的精确库名（默认仅允许库名包含 test）。
+	pgDBNameAllowEnv = "MARKETPAL_TEST_DB_ALLOW"
+	// pgKeepNamespaceEnv 置 1 时失败/结束后保留本次 schema，便于现场排查（默认清理）。
+	pgKeepNamespaceEnv = "MARKETPAL_TEST_KEEP_NS"
+)
+
+// pgBusinessTables 安全检查覆盖的业务表（默认 search_path=public 下）。
+var pgBusinessTables = []string{"users", "orders", "products", "refunds", "refund_negotiations"}
+
+func openPostgresEnv(t *testing.T, baseDSN string) *persistEnv {
 	t.Helper()
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	// 管理连接：使用默认 search_path，仅用于安全门检查与创建/删除本次专用 schema，绝不 TRUNCATE 业务表。
+	admin, err := gorm.Open(postgres.Open(baseDSN), &gorm.Config{})
 	if err != nil {
-		t.Fatalf("连接 PostgreSQL 失败（DSN=%s）: %v", dsn, err)
+		t.Fatalf("连接 PostgreSQL 失败（DSN=%s）: %v", baseDSN, err)
 	}
-	if err := db.AutoMigrate(refundTestModelsAll...); err != nil {
-		t.Fatalf("PostgreSQL AutoMigrate 失败: %v", err)
+	tunePool(admin)
+	t.Cleanup(func() {
+		if sqlDB, err := admin.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	var dbName string
+	if err := admin.Raw(`SELECT current_database()`).Scan(&dbName).Error; err != nil {
+		t.Fatalf("读取 PostgreSQL 当前库名失败: %v", err)
+	}
+	// 安全门 1+2：必须显式确认专用库，且库名像验证库。不能仅凭一个地址就动手。
+	if err := guardDedicatedTestDB(dbName, os.Getenv(pgConfirmEnv), os.Getenv(pgDBNameAllowEnv)); err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	// 安全门 3：默认 schema 下不得已有业务数据；发现任何业务行都拒绝，不做清理。
+	tableCounts := make(map[string]int64, len(pgBusinessTables))
+	for _, table := range pgBusinessTables {
+		var exists int
+		if err := admin.Raw(`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?`, table).Scan(&exists).Error; err != nil {
+			t.Fatalf("检查业务表 %s 是否存在失败: %v", table, err)
+		}
+		if exists == 0 {
+			continue
+		}
+		var n int64
+		if err := admin.Raw(fmt.Sprintf(`SELECT COUNT(*) FROM public.%s`, table)).Scan(&n).Error; err != nil {
+			t.Fatalf("统计业务表 public.%s 行数失败: %v", table, err)
+		}
+		tableCounts[table] = n
+	}
+	if err := guardNoBusinessData(dbName, tableCounts); err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	// 本次运行的独立命名空间：仅创建/迁移/删除该 schema，不触碰其它任何对象。
+	ns := fmt.Sprintf("rt_refund_%d_%d", os.Getpid(), envSeq.Add(1))
+	if err := admin.Exec(fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, ns)).Error; err != nil {
+		t.Fatalf("准备测试 schema %s 失败: %v", ns, err)
+	}
+	if err := admin.Exec(fmt.Sprintf(`CREATE SCHEMA %s`, ns)).Error; err != nil {
+		t.Fatalf("创建测试 schema %s 失败: %v", ns, err)
+	}
+	keepNS := os.Getenv(pgKeepNamespaceEnv) == "1"
+	t.Cleanup(func() {
+		if keepNS {
+			t.Logf("按 %s=1 保留本次测试命名空间 schema=%s（库=%s），确认无用后请手工删除", pgKeepNamespaceEnv, ns, dbName)
+			return
+		}
+		if err := admin.Exec(fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, ns)).Error; err != nil {
+			t.Errorf("清理测试 schema %s 失败（库内其它数据未受影响）: %v", ns, err)
+		}
+	})
+
+	// 业务连接全部绑定 search_path 到本次 schema（含并发独立连接），实现命名空间隔离。
+	nsDSN := withPostgresSearchPath(baseDSN, ns)
+	db, err := gorm.Open(postgres.Open(nsDSN), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("打开命名空间连接失败(schema=%s): %v", ns, err)
 	}
 	tunePool(db)
-	// 每个用例清空相关表，保证重复运行互不串数据。
-	if err := db.Exec(`TRUNCATE refund_negotiations, refunds, reviews, messages, cart_items, addresses, favorites, products, orders, users, audit_logs RESTART IDENTITY CASCADE`).Error; err != nil {
-		t.Fatalf("PostgreSQL TRUNCATE 失败: %v", err)
+	if err := db.AutoMigrate(refundTestModelsAll...); err != nil {
+		t.Fatalf("PostgreSQL AutoMigrate 失败(schema=%s): %v", ns, err)
 	}
-	return &persistEnv{t: t, driver: "postgres", dsn: dsn, db: db}
+	return &persistEnv{t: t, driver: "postgres", dsn: nsDSN, adminDB: admin, db: db, nsSchema: ns}
+}
+
+// guardNoBusinessData 安全门 3（纯函数）：默认 schema 下任一业务表已有数据即拒绝运行。
+// tableCounts 为各业务表当前行数；存在非空表时必须失败，且夹具不得清理这些数据。
+func guardNoBusinessData(dbName string, tableCounts map[string]int64) error {
+	for _, table := range pgBusinessTables {
+		if n := tableCounts[table]; n > 0 {
+			return fmt.Errorf(
+				"拒绝运行：目标库 %s 的 public.%s 已存在 %d 行业务数据。夹具只允许使用空的专用验证库，"+
+					"请更换空库或用 %s 精确放行其它空专用库名；本次未创建或删除任何对象。",
+				dbName, table, n, pgDBNameAllowEnv)
+		}
+	}
+	return nil
+}
+
+// withPostgresSearchPath 在 DSN 上追加 search_path 运行参数（兼容 URL 与 key=value 两种形式）。
+func withPostgresSearchPath(dsn, schema string) string {
+	if strings.Contains(dsn, "://") {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		return dsn + sep + "search_path=" + schema
+	}
+	return dsn + " search_path=" + schema
+}
+
+// guardDedicatedTestDB 外部库安全门（纯函数，便于在无数据库时表驱动验证）：
+//   - 必须显式设置确认令牌（只给一个 DSN 不构成授权）；
+//   - 库名必须包含 test（大小写不敏感），或与 MARKETPAL_TEST_DB_ALLOW 精确匹配。
+//
+// 返回非 nil 时必须拒绝运行，不得创建或删除任何对象。
+func guardDedicatedTestDB(dbName, confirm, allowName string) error {
+	if confirm != pgConfirmToken {
+		return fmt.Errorf(
+			"拒绝运行：外部 PostgreSQL 回归需要显式确认目标库为专用验证库。\n"+
+				"请设置环境变量 %s=%s 后再运行；当前仅提供了 MARKETPAL_TEST_POSTGRES_DSN。\n"+
+				"该确认表示你知晓夹具只会在库内创建/删除本次测试的独立 schema（rt_refund_*），不会清理任何其它数据。",
+			pgConfirmEnv, pgConfirmToken)
+	}
+	if strings.Contains(strings.ToLower(dbName), "test") || (allowName != "" && dbName == allowName) {
+		return nil
+	}
+	return fmt.Errorf(
+		"拒绝运行：目标库名 %q 不像专用验证库（默认要求库名包含 test，或设置 %s 精确放行）。",
+		dbName, pgDBNameAllowEnv)
 }
 
 // newHandle 打开指向同一数据库的全新独立连接池（并发用例每个 goroutine 一个，真实竞争）。
@@ -158,7 +280,7 @@ type refundFixture struct {
 }
 
 // ensureParties 准备买家(100)/卖家(200)与默认收货地址(1)，满足外键约束。
-// 每个环境独立（SQLite 临时文件全新 / Postgres 用例前 TRUNCATE），因此直接创建。
+// 每个环境独立（SQLite 为全新临时文件；Postgres 为本次运行专用 schema），因此直接创建。
 func (e *persistEnv) ensureParties() {
 	e.t.Helper()
 	var userCount int64

@@ -99,9 +99,13 @@ go vet ./...
 go test ./...
 # 售后并发回归默认使用独立磁盘 SQLite（WAL + BEGIN IMMEDIATE，多连接真实竞争），可重复执行：
 go test ./internal/service/ -run TestPersist -count=3
-# 设置 DSN 后同一套并发/顺序回归改走真实 PostgreSQL（SELECT ... FOR UPDATE）：
-MARKETPAL_TEST_POSTGRES_DSN='host=localhost port=44014 user=marketpal_user password=marketpal_pwd dbname=marketpal_db sslmode=disable' \
+# 设置专用验证库 DSN 后，同一套并发/顺序回归改走真实 PostgreSQL（SELECT ... FOR UPDATE）。
+# 夹具不会 TRUNCATE 业务表：需库名包含 test（或用 MARKETPAL_TEST_DB_ALLOW 精确放行），
+# 并显式确认目标库为空的专用验证库；运行数据隔离在每次执行新建的 rt_refund_* schema，结束自动 DROP。
+MARKETPAL_TEST_POSTGRES_DSN='host=localhost port=44014 user=marketpal_user password=marketpal_pwd dbname=marketpal_test sslmode=disable' \
+MARKETPAL_TEST_DEDICATED_CONFIRM=i-confirm-empty-dedicated-test-db \
   go test ./internal/service/ -run TestPersist -v
+# 排查问题时可保留本次 schema：额外设置 MARKETPAL_TEST_KEEP_NS=1
 ```
 
 ### 前端
